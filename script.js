@@ -33,6 +33,11 @@ document.addEventListener('DOMContentLoaded', () => {
     let todayIndex = -1;
     let sidebarCurrentDateIndex = 0;
     let currentViewMonday = null; // 当前视图显示的周一日期
+    
+    // 用于防抖保存和避免冲突
+    let saveTimeout = null;
+    let isLocalWriting = false;
+    let lastLocalWriteTime = 0;
 
     const sidebar = document.getElementById('sidebar');
     const sidebarDateVal = document.querySelector('.sidebar-date-val');
@@ -43,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // const storedData = localStorage.getItem(STORAGE_KEY);
         let shouldReset = false;
         
-        // 尝试匿名登录腾讯云（如果未开启匿名登录可能会失败，但为了演示完整性加上）
+        // 尝试匿名登录腾讯云
         try {
             const loginState = await auth.getLoginState();
             if (!loginState) {
@@ -267,37 +272,57 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function saveToStorage() {
-        // localStorage.setItem(STORAGE_KEY, JSON.stringify(taskData));
-        // 改造 2：「保存 / 提交数据」—— 写到腾讯云数据库
-        try {
-            await db.add({
-                payload: taskData,
-                time: new Date().getTime() // 用于排序
-            });
-            // console.log("提交成功，全员实时同步");
-        } catch (err) {
-            console.error("云数据库写入失败", err);
-            alert("数据保存失败，请检查网络或权限设置");
-        }
+        // 使用防抖，避免频繁写入云端
+        if (saveTimeout) clearTimeout(saveTimeout);
+        
+        saveTimeout = setTimeout(async () => {
+            isLocalWriting = true;
+            lastLocalWriteTime = Date.now();
+            
+            try {
+                // 确保已经登录
+                const loginState = await auth.getLoginState();
+                if (!loginState) {
+                    await auth.anonymousAuthProvider().signIn();
+                }
+
+                await db.add({
+                    payload: taskData,
+                    time: new Date().getTime() // 用于排序
+                });
+                // console.log("数据同步成功");
+            } catch (err) {
+                console.error("云数据库写入失败", err);
+                // 可以在这里添加一个提示，但不建议用 alert 干扰用户
+            } finally {
+                // 延迟一小会儿重置标志位，确保 watchData 的 onChange 不会立即覆盖
+                setTimeout(() => {
+                    isLocalWriting = false;
+                }, 1000);
+            }
+        }, 800); // 800ms 防抖
     }
 
     // 数据库变化自动刷新
     function watchData() {
         db.orderBy("time", "desc").limit(1).watch({
             onChange: (snapshot) => {
-                // 检查是否有文档变化
+                // 如果本地正在写入，或者距离上次写入时间太短（防止回环覆盖），则跳过云端同步
+                if (isLocalWriting || (Date.now() - lastLocalWriteTime < 2000)) {
+                    // console.log("本地正在操作，跳过云端同步以防止覆盖");
+                    return;
+                }
+
                 if (snapshot.docs && snapshot.docs.length > 0) {
                     const remoteData = snapshot.docs[0].payload;
-                    // 这里简单处理：直接覆盖本地数据并重新渲染
-                    // 实际生产中可能需要对比版本或差异更新，避免覆盖用户正在进行的操作
+                    
+                    // 深度对比或简单校验，这里为了性能简单覆盖
                     taskData = remoteData;
                     
-                    // 重新运行部分渲染逻辑
                     updateDates();
                     updateSidebarDateDisplay();
                     renderLeft();
                     renderRight();
-                    // console.log("收到云端更新，已同步");
                 }
             },
             onError: (err) => {
@@ -324,9 +349,9 @@ document.addEventListener('DOMContentLoaded', () => {
             blocksContainer.className = 'name-blocks-container';
 
             if (isCollapsed) {
-                blocksContainer.appendChild(createNameBlock(name, sidebarCurrentDateIndex));
+                blocksContainer.appendChild(createNameBlock(name, sidebarCurrentDateIndex, index));
             } else {
-                for (let i = 0; i < 5; i++) blocksContainer.appendChild(createNameBlock(name, i));
+                for (let i = 0; i < 5; i++) blocksContainer.appendChild(createNameBlock(name, i, index));
             }
             row.appendChild(blocksContainer);
             listContainer.appendChild(row);
@@ -334,12 +359,13 @@ document.addEventListener('DOMContentLoaded', () => {
         updateSidebarDateDisplay();
     }
 
-    function createNameBlock(name, dateIndex) {
+    function createNameBlock(name, dateIndex, sourceIndex) {
         const block = document.createElement('div');
         block.className = 'name-block';
         block.textContent = name;
         block.dataset.name = name;
         block.dataset.dateIndex = dateIndex;
+        block.dataset.sourceIndex = sourceIndex;
         block.dataset.source = 'left';
         block.style.background = getColorForName(name);
 
@@ -538,6 +564,7 @@ document.addEventListener('DOMContentLoaded', () => {
         card.dataset.name = name;
         card.dataset.sourceDateIndex = dateIndex;
         card.dataset.sectionId = sectionId;
+        card.dataset.sourceIndex = personIndex; // 记录在数组中的索引
         card.dataset.source = 'right';
         card.addEventListener('dragstart', handleDragStart);
         card.addEventListener('dragend', handleDragEnd);
@@ -641,16 +668,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function saveTodo(text) {
         const { type, dateIndex, sectionId, personIndex } = currentTodoTarget;
+        if (dateIndex === -1) return; // 基础校验
+        
         const dateKey = getDateKey(dateIndex);
-        if (type === 'global') {
-            const section = taskData.taskSections[dateKey].find(s => s.id === sectionId);
-            section.todos.push({ text, done: false });
-        } else {
-            const person = taskData.rightPersonMap[dateKey][sectionId][personIndex];
-            person.todos.push({ text, done: false });
+        
+        try {
+            if (type === 'global') {
+                if (!taskData.taskSections[dateKey]) return;
+                const section = taskData.taskSections[dateKey].find(s => s.id === sectionId);
+                if (section) {
+                    section.todos.push({ text, done: false });
+                }
+            } else {
+                if (!taskData.rightPersonMap[dateKey] || !taskData.rightPersonMap[dateKey][sectionId]) return;
+                const person = taskData.rightPersonMap[dateKey][sectionId][personIndex];
+                if (person) {
+                    if (!person.todos) person.todos = [];
+                    person.todos.push({ text, done: false });
+                }
+            }
+            saveToStorage();
+            renderRight();
+        } catch (e) {
+            console.error('保存待办失败:', e);
         }
-        saveToStorage();
-        renderRight();
     }
 
     function addSection(dateIndex, initialPersonName = null) {
@@ -736,6 +777,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (confirm('确定要删除这个任务板块吗？该板块下的所有人员安排也将被移除。')) {
             const dateKey = getDateKey(dateIndex);
             const sections = taskData.taskSections[dateKey];
+            if (!sections) return;
+            
             const idx = sections.findIndex(s => s.id === sectionId);
             if (idx !== -1) {
                 sections.splice(idx, 1);
@@ -821,12 +864,15 @@ document.addEventListener('DOMContentLoaded', () => {
             container.addEventListener('dragover', (e) => {
                 e.preventDefault();
                 
+                const assignedArea = container.closest('.assigned-area');
+                if (!assignedArea) return;
+                
                 // 检查是否可以放置
                 const rawData = e.dataTransfer.getData('text/plain');
                 if (rawData) {
                     try {
                         const { name, fromIndex, source } = JSON.parse(rawData);
-                        const targetDateIndex = parseInt(container.closest('.assigned-area').dataset.dateIndex);
+                        const targetDateIndex = parseInt(assignedArea.dataset.dateIndex);
                         
                         // 逻辑：如果是同一天内的拖拽，允许（跨板块移动）
                         // 如果是不同天的拖拽，且目标日期已经存在该人，则不允许
@@ -845,10 +891,14 @@ document.addEventListener('DOMContentLoaded', () => {
             container.addEventListener('drop', (e) => {
                 e.preventDefault();
                 container.classList.remove('drag-over');
+                
+                const assignedArea = container.closest('.assigned-area');
+                if (!assignedArea) return;
+                
                 const rawData = e.dataTransfer.getData('text/plain');
                 if (!rawData) return;
                 const { name, source, fromIndex, sectionId: oldSectionId, sourceIndex } = JSON.parse(rawData);
-                const targetDateIndex = parseInt(container.closest('.assigned-area').dataset.dateIndex);
+                const targetDateIndex = parseInt(assignedArea.dataset.dateIndex);
                 const targetSectionId = container.dataset.sectionId;
 
                 // 最终校验逻辑：
@@ -949,13 +999,42 @@ document.addEventListener('DOMContentLoaded', () => {
         if (input) input.click();
     };
 
-    window.resetAllData = function() {
-         if (confirm('警告：这将清空所有人员安排、预设和配置，并恢复到初始状态。此操作不可撤销，确定继续吗？')) {
-             localStorage.removeItem(STORAGE_KEY);
-             localStorage.removeItem('lastBackupTime');
-             location.reload(); // 刷新页面以重新初始化
-         }
-     };
+    window.resetAllData = async function() {
+        if (confirm('警告：这将清空所有人员安排、预设和配置，并恢复到初始状态（全员可见）。确定继续吗？')) {
+            // 重置本地数据结构
+            taskData = {
+                leftPersonList: [...DEFAULT_PERSONNEL],
+                rightPersonMap: {},
+                taskSections: {},
+                taskPresets: ['早班巡检', '午间清理', '晚班移交', '周报整理'],
+                todoPresets: ['日常巡检', '环境清洁', '设备维护', '文档整理', '客户接待'],
+                sectionPresets: ['日常任务', '专项任务', '临时增援', '值班工作'],
+                dayStates: {}
+            };
+            
+            // 为本周初始化默认数据
+            for (let i = 0; i < 5; i++) {
+                const dateKey = getDateKey(i);
+                const defaultSectionId = 'default-' + dateKey;
+                taskData.taskSections[dateKey] = [{ id: defaultSectionId, title: '默认任务', todos: [], isExpanded: false }];
+                taskData.rightPersonMap[dateKey] = { [defaultSectionId]: [] };
+                taskData.dayStates[dateKey] = { isTodoExpanded: false, isTaskExpanded: false };
+            }
+            
+            // 立即同步到云端（绕过防抖以保证即时性）
+            try {
+                await db.add({
+                    payload: taskData,
+                    time: new Date().getTime()
+                });
+                alert('系统已重置，正在刷新页面...');
+                location.reload();
+            } catch (err) {
+                console.error("重置失败:", err);
+                alert('重置失败，请重试');
+            }
+        }
+    };
  
      window.importData = function(event) {
          const file = event.target.files[0];
