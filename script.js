@@ -45,17 +45,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarDayCols = document.querySelectorAll('.sidebar-day-col');
 
     async function init() {
+        console.log('🚀 [TCB] 初始化开始...');
         // const storedData = localStorage.getItem(STORAGE_KEY);
         let shouldReset = false;
         
         // 尝试匿名登录腾讯云
         try {
+            console.log('🔑 [TCB] 正在尝试匿名登录...');
             const loginState = await auth.getLoginState();
             if (!loginState) {
-                await auth.anonymousAuthProvider().signIn();
+                const res = await auth.anonymousAuthProvider().signIn();
+                console.log('✅ [TCB] 匿名登录成功:', res);
+            } else {
+                console.log('ℹ️ [TCB] 已处于登录状态');
             }
         } catch (e) {
-            console.warn('腾讯云匿名登录失败，请确保已在控制台开启匿名登录:', e);
+            console.error('❌ [TCB] 匿名登录失败:', e);
         }
 
         // 初始化当前视图的周一
@@ -68,10 +73,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // 改造 1：「读取数据」—— 从腾讯云数据库读
+            console.log('📥 [TCB] 正在从云端读取最新数据...');
             const res = await db.orderBy("time", "desc").limit(1).get();
+            console.log('📦 [TCB] 云端读取原始响应:', res);
+
             if (res.data && res.data.length > 0) {
                 // 获取最新的一条数据作为当前状态
                 taskData = res.data[0].payload;
+                console.log('✅ [TCB] 成功获取最新 Payload');
                 
                 // 数据迁移逻辑：从 0-4 索引迁移到日期 Key
                 migrateDataToDateKeys();
@@ -272,10 +281,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function saveToStorage() {
+        console.log('⏳ [TCB] 准备写入数据 (等待防抖)...');
         // 使用防抖，避免频繁写入云端
         if (saveTimeout) clearTimeout(saveTimeout);
         
         saveTimeout = setTimeout(async () => {
+            console.log('📤 [TCB] 防抖结束，开始执行写入流程...');
             isLocalWriting = true;
             lastLocalWriteTime = Date.now();
             
@@ -283,21 +294,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 // 确保已经登录
                 const loginState = await auth.getLoginState();
                 if (!loginState) {
+                    console.log('🔑 [TCB] 写入前检测到未登录，尝试重新登录...');
                     await auth.anonymousAuthProvider().signIn();
                 }
 
-                await db.add({
+                console.log('📝 [TCB] 正在向集合 task_data 添加文档...', taskData);
+                const res = await db.add({
                     payload: taskData,
                     time: new Date().getTime() // 用于排序
                 });
+                console.log('✅ [TCB] 写入成功，响应结果:', res);
                 // console.log("数据同步成功");
             } catch (err) {
-                console.error("云数据库写入失败", err);
+                console.error("❌ [TCB] 云数据库写入失败!", err);
+                console.error("❌ [TCB] 错误详情:", JSON.stringify(err));
                 // 可以在这里添加一个提示，但不建议用 alert 干扰用户
             } finally {
                 // 延迟一小会儿重置标志位，确保 watchData 的 onChange 不会立即覆盖
                 setTimeout(() => {
                     isLocalWriting = false;
+                    console.log('🔓 [TCB] 写入锁已释放');
                 }, 1000);
             }
         }, 800); // 800ms 防抖
@@ -305,16 +321,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 数据库变化自动刷新
     function watchData() {
+        console.log('📡 [TCB] 开启实时监听...');
         db.orderBy("time", "desc").limit(1).watch({
             onChange: (snapshot) => {
+                console.log('👀 [TCB] 收到云端变化推送:', snapshot);
                 // 如果本地正在写入，或者距离上次写入时间太短（防止回环覆盖），则跳过云端同步
                 if (isLocalWriting || (Date.now() - lastLocalWriteTime < 2000)) {
-                    // console.log("本地正在操作，跳过云端同步以防止覆盖");
+                    console.log('⚠️ [TCB] 检测到本地正在写入，跳过本次云端推送以防覆盖');
                     return;
                 }
 
                 if (snapshot.docs && snapshot.docs.length > 0) {
                     const remoteData = snapshot.docs[0].payload;
+                    console.log('🔄 [TCB] 正在应用云端数据更新...');
                     
                     // 深度对比或简单校验，这里为了性能简单覆盖
                     taskData = remoteData;
@@ -323,10 +342,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     updateSidebarDateDisplay();
                     renderLeft();
                     renderRight();
+                } else {
+                    console.log('ℹ️ [TCB] 推送快照为空（可能是初次建立监听或无数据）');
                 }
             },
             onError: (err) => {
-                console.error("监听数据变化失败", err);
+                console.error("❌ [TCB] 监听实时数据变化失败!", err);
             }
         });
     }
