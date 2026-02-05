@@ -1,4 +1,9 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // 初始化腾讯云开发（必须放在代码最顶部，环境ID复制腾讯云的，一字不差）
+    const app = cloudbase.init({ env: "share-task-01-3gx43chof7e199ad" }); // TODO: 请替换为您真实的环境ID
+    const db = app.database().collection("task_data"); // 关联你的集合
+    const auth = app.auth();
+
     // 改用新的 Storage Key
     const STORAGE_KEY = 'taskPlanData';
     const DEFAULT_PERSONNEL = ['畅为', '尚哥', '白云', '喆杰', '可欣', '嘉豪', '孜尊', '晟杰', '星宇', '俊鹏', '英祺', '璐燚', '俊杰', '依婷'];
@@ -34,10 +39,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const sidebarWeekdayVal = document.querySelector('.sidebar-weekday-val');
     const sidebarDayCols = document.querySelectorAll('.sidebar-day-col');
 
-    function init() {
-        const storedData = localStorage.getItem(STORAGE_KEY);
+    async function init() {
+        // const storedData = localStorage.getItem(STORAGE_KEY);
         let shouldReset = false;
         
+        // 尝试匿名登录腾讯云（如果未开启匿名登录可能会失败，但为了演示完整性加上）
+        try {
+            const loginState = await auth.getLoginState();
+            if (!loginState) {
+                await auth.anonymousAuthProvider().signIn();
+            }
+        } catch (e) {
+            console.warn('腾讯云匿名登录失败，请确保已在控制台开启匿名登录:', e);
+        }
+
         // 初始化当前视图的周一
         const today = new Date();
         const currentDay = today.getDay();
@@ -46,9 +61,12 @@ document.addEventListener('DOMContentLoaded', () => {
         currentViewMonday.setHours(0, 0, 0, 0);
         currentViewMonday.setDate(today.getDate() - distanceToMonday);
 
-        if (storedData) {
-            try {
-                taskData = JSON.parse(storedData);
+        try {
+            // 改造 1：「读取数据」—— 从腾讯云数据库读
+            const res = await db.orderBy("time", "desc").limit(1).get();
+            if (res.data && res.data.length > 0) {
+                // 获取最新的一条数据作为当前状态
+                taskData = res.data[0].payload;
                 
                 // 数据迁移逻辑：从 0-4 索引迁移到日期 Key
                 migrateDataToDateKeys();
@@ -76,11 +94,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!taskData.leftPersonList || taskData.leftPersonList.length === 0) {
                     shouldReset = true;
                 }
-            } catch (e) {
-                console.error('Failed to parse storage', e);
+            } else {
+                // 云端无数据，初始化默认值
                 shouldReset = true;
             }
-        } else {
+        } catch (e) {
+            console.error('云数据库读取失败:', e);
             shouldReset = true;
         }
 
@@ -94,6 +113,9 @@ document.addEventListener('DOMContentLoaded', () => {
         renderLeft();
         renderRight();
         initDragDrop();
+        
+        // 开启实时监听
+        watchData();
     }
 
     function migrateDataToDateKeys() {
@@ -244,8 +266,44 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    function saveToStorage() {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(taskData));
+    async function saveToStorage() {
+        // localStorage.setItem(STORAGE_KEY, JSON.stringify(taskData));
+        // 改造 2：「保存 / 提交数据」—— 写到腾讯云数据库
+        try {
+            await db.add({
+                payload: taskData,
+                time: new Date().getTime() // 用于排序
+            });
+            // console.log("提交成功，全员实时同步");
+        } catch (err) {
+            console.error("云数据库写入失败", err);
+            alert("数据保存失败，请检查网络或权限设置");
+        }
+    }
+
+    // 数据库变化自动刷新
+    function watchData() {
+        db.orderBy("time", "desc").limit(1).watch({
+            onChange: (snapshot) => {
+                // 检查是否有文档变化
+                if (snapshot.docs && snapshot.docs.length > 0) {
+                    const remoteData = snapshot.docs[0].payload;
+                    // 这里简单处理：直接覆盖本地数据并重新渲染
+                    // 实际生产中可能需要对比版本或差异更新，避免覆盖用户正在进行的操作
+                    taskData = remoteData;
+                    
+                    // 重新运行部分渲染逻辑
+                    updateDates();
+                    updateSidebarDateDisplay();
+                    renderLeft();
+                    renderRight();
+                    // console.log("收到云端更新，已同步");
+                }
+            },
+            onError: (err) => {
+                console.error("监听数据变化失败", err);
+            }
+        });
     }
 
     function getColorForName(name) {
