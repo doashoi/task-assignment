@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务安排</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="drop-remove-area" class="drop-remove-area">
+        <span class="remove-icon">🗑️</span>
+        <span class="remove-text">拖拽到此处移除人员</span>
+    </div>
+    <div class="container">
+        <!-- 左侧备选栏 (可折叠) -->
+        <aside class="sidebar collapsed" id="sidebar">
+            <div class="sidebar-top-bar">
+                <button class="btn-toggle" onclick="toggleSidebar()" title="展开/折叠菜单">
+                    <span class="icon-menu">☰</span>
+                </button>
+                <div class="sidebar-header">
+                    <button class="btn-action" onclick="addPerson()" title="添加人员">
+                        <span class="btn-icon">👤+</span>
+                        <span class="btn-text">添加人员</span>
+                    </button>
+                    <button class="btn-action" onclick="showDeleteDialog()" title="删除人员">
+                        <span class="btn-icon">👤-</span>
+                        <span class="btn-text">删除人员</span>
+                    </button>
+                    <button class="btn-action" onclick="managePresets('section')" title="板块预设">
+                        <span class="btn-icon">🏗️</span>
+                        <span class="btn-text">板块预设</span>
+                    </button>
+                    <button class="btn-action" onclick="managePresets('task')" title="任务预设">
+                        <span class="btn-icon">📋</span>
+                        <span class="btn-text">任务预设</span>
+                    </button>
+                    <button class="btn-action" onclick="managePresets('todo')" title="代办预设">
+                        <span class="btn-icon">✅</span>
+                        <span class="btn-text">代办预设</span>
+                    </button>
+                    <button class="btn-action" onclick="showDataManagement()" title="数据管理">
+                        <span class="btn-icon">💾</span>
+                        <span class="btn-text">数据管理</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 侧边栏展开时的周切换导航 -->
+            <div class="sidebar-expanded-week-nav">
+                <button class="btn-expanded-week-nav" onclick="changeWeek(-1)">
+                    <span class="nav-icon">‹</span> 上周
+                </button>
+                <div class="expanded-week-label">本周安排</div>
+                <button class="btn-expanded-week-nav" onclick="changeWeek(1)">
+                    下周 <span class="nav-icon">›</span>
+                </button>
+            </div>
+
+            <div class="sidebar-date-switcher-container">
+                <div class="nav-controls-group">
+                    <div class="week-nav-row">
+                        <button class="btn-week-nav" onclick="changeWeek(-1)" title="上周">上周</button>
+                        <button class="btn-week-nav" onclick="changeWeek(1)" title="下周">下周</button>
+                    </div>
+
+                    <div class="date-display-box">
+                        <div class="sidebar-date-val">--月--日</div>
+                        <div class="sidebar-weekday-val">周一</div>
+                    </div>
+                    
+                    <div class="day-nav-row">
+                        <button class="btn-date-nav-arrow" onclick="prevSidebarDate()" title="前一天">‹</button>
+                        <button class="btn-date-nav-arrow" onclick="nextSidebarDate()" title="后一天">›</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar-expandable-content">
+                <!-- 左侧日期表头 (展开时显示全部) -->
+                <div class="sidebar-week-header">
+                    <div class="sidebar-day-col" data-date-index="0">
+                        <div class="date-placeholder-left"></div>
+                        <div class="weekday-left">周一</div>
+                    </div>
+                    <div class="sidebar-day-col" data-date-index="1">
+                        <div class="date-placeholder-left"></div>
+                        <div class="weekday-left">周二</div>
+                    </div>
+                    <div class="sidebar-day-col" data-date-index="2">
+                        <div class="date-placeholder-left"></div>
+                        <div class="weekday-left">周三</div>
+                    </div>
+                    <div class="sidebar-day-col" data-date-index="3">
+                        <div class="date-placeholder-left"></div>
+                        <div class="weekday-left">周四</div>
+                    </div>
+                    <div class="sidebar-day-col" data-date-index="4">
+                        <div class="date-placeholder-left"></div>
+                        <div class="weekday-left">周五</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="personnel-list">
+                <!-- 列表将由 JavaScript 动态生成 -->
+            </div>
+        </aside>
+
+        <!-- 右侧任务展示区 -->
+        <main class="main-content">
+            <div class="calendar-grid">
+                <!-- 每天一列 -->
+                <div class="day-column">
+                    <div class="day-header">
+                        <div class="day-info">
+                            <span class="weekday">周一</span>
+                            <span class="date-placeholder"></span>
+                        </div>
+                    </div>
+                    <div class="assigned-area" data-date-index="0"></div>
+                </div>
+                <div class="day-column">
+                    <div class="day-header">
+                        <div class="day-info">
+                            <span class="weekday">周二</span>
+                            <span class="date-placeholder"></span>
+                        </div>
+                    </div>
+                    <div class="assigned-area" data-date-index="1"></div>
+                </div>
+                <div class="day-column">
+                    <div class="day-header">
+                        <div class="day-info">
+                            <span class="weekday">周三</span>
+                            <span class="date-placeholder"></span>
+                        </div>
+                    </div>
+                    <div class="assigned-area" data-date-index="2"></div>
+                </div>
+                <div class="day-column">
+                    <div class="day-header">
+                        <div class="day-info">
+                            <span class="weekday">周四</span>
+                            <span class="date-placeholder"></span>
+                        </div>
+                    </div>
+                    <div class="assigned-area" data-date-index="3"></div>
+                </div>
+                <div class="day-column">
+                    <div class="day-header">
+                        <div class="day-info">
+                            <span class="weekday">周五</span>
+                            <span class="date-placeholder"></span>
+                        </div>
+                    </div>
+                    <div class="assigned-area" data-date-index="4"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 数据管理弹窗 -->
+    <div id="data-modal" class="modal">
+        <div class="modal-content data-modal-content">
+            <div class="modal-header">
+                <h3>数据备份与同步</h3>
+                <span class="close" onclick="closeDataModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="data-info-box">
+                    <p><strong>当前状态：</strong> 数据实时保存在浏览器本地存储中。</p>
+                    <p class="data-hint">提示：建议定期导出备份文件，防止浏览器清理缓存导致数据丢失。</p>
+                </div>
+                <div class="data-actions-grid">
+                    <div class="data-action-card" onclick="exportData()">
+                        <div class="action-icon">📤</div>
+                        <div class="action-title">导出备份</div>
+                        <div class="action-desc">将当前所有数据导出为 JSON 文件到本地</div>
+                    </div>
+                    <div class="data-action-card" onclick="triggerImport()">
+                        <div class="action-icon">📥</div>
+                        <div class="action-title">导入恢复</div>
+                        <div class="action-desc">从本地备份文件恢复数据（会覆盖当前数据）</div>
+                        <input type="file" id="import-file-input" style="display: none" accept=".json" onchange="importData(event)">
+                    </div>
+                </div>
+                <div id="last-backup-info" class="last-backup-info"></div>
+                <div class="data-danger-zone">
+                    <button class="btn-danger-outline" onclick="resetAllData()">重置所有数据</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 板块选择/输入弹窗 -->
+    <div id="section-modal" class="modal">
+        <div class="modal-content todo-modal-content">
+            <div class="modal-header">
+                <h3>添加任务板块</h3>
+                <span class="close" onclick="closeSectionModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="todo-input-section">
+                    <label>手动输入：</label>
+                    <div class="input-group">
+                        <input type="text" id="section-manual-input" placeholder="输入板块名称...">
+                        <button class="btn-primary" onclick="confirmManualSection()">确定</button>
+                    </div>
+                </div>
+                <div class="preset-selection-section">
+                    <label>从预设选择：</label>
+                    <div class="preset-tags" id="section-preset-tags">
+                        <!-- 预设标签将由 JS 动态渲染 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 任务预设弹窗 -->
+    <div id="preset-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>任务预设管理</h3>
+                <span class="close" onclick="closePresetModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="preset-add-form">
+                    <input type="text" id="new-preset-input" placeholder="输入新的预设任务...">
+                    <button class="btn-primary" onclick="addPreset()">添加</button>
+                </div>
+                <div class="preset-list" id="modal-preset-list">
+                    <!-- 预设列表将由 JS 动态渲染 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 待办选择/输入弹窗 -->
+    <div id="todo-modal" class="modal">
+        <div class="modal-content todo-modal-content">
+            <div class="modal-header">
+                <h3 id="todo-modal-title">添加待办</h3>
+                <span class="close" onclick="closeTodoModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="todo-input-section">
+                    <label>手动输入：</label>
+                    <div class="input-group">
+                        <input type="text" id="todo-manual-input" placeholder="输入待办事项...">
+                        <button class="btn-primary" onclick="confirmManualTodo()">确定</button>
+                    </div>
+                </div>
+                <div class="preset-selection-section">
+                    <label>从预设选择：</label>
+                    <div class="preset-tags" id="todo-preset-tags">
+                        <!-- 预设标签将由 JS 动态渲染 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
